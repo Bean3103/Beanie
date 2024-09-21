@@ -1,0 +1,128 @@
+import discord
+from discord.ext import commands
+from discord.ui import Button, View, Modal, TextInput
+import os
+
+# Set up bot intents
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+
+# Create a bot instance with intents
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Helper function to round to 2 significant figures
+def round_to_sig_figs(num, sig_figs):
+    if num == 0:
+        return 0
+    else:
+        return round(num, sig_figs - len(str(int(num))))
+
+# Linear to Exponential conversion (rounded to 2 significant figures)
+def convert_linear_to_exponential(build, edit, horiz, vert, deadzone):
+    new_build = round_to_sig_figs(build / 1.1, 2)  # Divide by 1.1 and round
+    new_edit = round_to_sig_figs(edit / 1.1, 2)    # Divide by 1.1 and round
+    new_horiz = round_to_sig_figs(horiz / 0.8, 2)  # Divide by 0.8 and round
+    new_vert = round_to_sig_figs(vert / 0.8, 2)    # Divide by 0.8 and round
+    new_deadzone = round_to_sig_figs((new_horiz - horiz) + deadzone, 2)  # Round deadzone
+    if new_deadzone < 5:
+        new_deadzone = 5
+    return new_build, new_edit, new_horiz, new_vert, new_deadzone
+
+# Exponential to Linear conversion (rounded to 2 significant figures)
+def convert_exponential_to_linear(build, edit, horiz, vert, deadzone):
+    new_build = round_to_sig_figs(build * 1.1, 2)  # Multiply by 1.1 and round
+    new_edit = round_to_sig_figs(edit * 1.1, 2)    # Multiply by 1.1 and round
+    new_horiz = round_to_sig_figs(horiz * 0.8, 2)  # Multiply by 0.8 and round
+    new_vert = round_to_sig_figs(vert * 0.8, 2)    # Multiply by 0.8 and round
+    new_deadzone = round_to_sig_figs((horiz - new_horiz) + deadzone, 2)  # Round deadzone
+    if new_deadzone < 5:
+        new_deadzone = 5
+    return new_build, new_edit, new_horiz, new_vert, new_deadzone
+
+# Modal for sensitivity input
+class SensitivityModal(Modal):
+    def __init__(self, conversion_type):
+        super().__init__(title="Sensitivity Conversion")
+        self.conversion_type = conversion_type
+        self.build_sens = TextInput(label="What is your build sensitivity?", placeholder="Enter build sensitivity", required=True)
+        self.edit_sens = TextInput(label="What is your edit sensitivity?", placeholder="Enter edit sensitivity", required=True)
+        self.horiz_sens = TextInput(label="What is your horizontal sensitivity?", placeholder="Enter horizontal sensitivity", required=True)
+        self.vert_sens = TextInput(label="What is your vertical sensitivity?", placeholder="Enter vertical sensitivity", required=True)
+        self.deadzone = TextInput(label="What is your right stick deadzone?", placeholder="Enter deadzone", required=True)
+
+        self.add_item(self.build_sens)
+        self.add_item(self.edit_sens)
+        self.add_item(self.horiz_sens)
+        self.add_item(self.vert_sens)
+        self.add_item(self.deadzone)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Get the inputs
+        build = float(self.build_sens.value)
+        edit = float(self.edit_sens.value)
+        horiz = float(self.horiz_sens.value)
+        vert = float(self.vert_sens.value)
+        deadzone = float(self.deadzone.value)
+
+        # Perform conversion based on the selected type
+        if self.conversion_type == "expo_to_linear":
+            new_build, new_edit, new_horiz, new_vert, new_deadzone = convert_exponential_to_linear(build, edit, horiz, vert, deadzone)
+            conversion_message = "Converted from Exponential to Linear:\n"
+        else:
+            new_build, new_edit, new_horiz, new_vert, new_deadzone = convert_linear_to_exponential(build, edit, horiz, vert, deadzone)
+            conversion_message = "Converted from Linear to Exponential:\n"
+
+        # Send the converted values back to the user
+        await interaction.response.send_message(f"{conversion_message}"
+                                                f"Build Sensitivity: {new_build}\n"
+                                                f"Edit Sensitivity: {new_edit}\n"
+                                                f"Horizontal Sensitivity: {new_horiz}%\n"
+                                                f"Vertical Sensitivity: {new_vert}%\n"
+                                                f"Right Stick Deadzone: {new_deadzone}%", ephemeral=True)
+
+# Slash command to pull up linear conversion modal
+@bot.tree.command(name="linear", description="Convert from Linear to Exponential")
+async def linear(interaction: discord.Interaction):
+    await interaction.response.send_modal(SensitivityModal("linear_to_expo"))
+
+# Slash command to pull up exponential conversion modal
+@bot.tree.command(name="expo", description="Convert from Exponential to Linear")
+async def expo(interaction: discord.Interaction):
+    await interaction.response.send_modal(SensitivityModal("expo_to_linear"))
+
+# Command to start the bot with buttons
+@bot.command()
+async def start(ctx):
+    # Create buttons for linear ↔ exponential conversion
+    linear_to_expo_button = Button(label="Linear to Exponential", style=discord.ButtonStyle.danger)
+    expo_to_linear_button = Button(label="Exponential to Linear", style=discord.ButtonStyle.blurple)
+
+    async def linear_to_expo_callback(interaction):
+        # Show the modal when Linear to Exponential is selected
+        await interaction.response.send_modal(SensitivityModal("linear_to_expo"))
+
+    async def expo_to_linear_callback(interaction):
+        # Show the modal when Exponential to Linear is selected
+        await interaction.response.send_modal(SensitivityModal("expo_to_linear"))
+
+    # Assign callback functions
+    linear_to_expo_button.callback = linear_to_expo_callback
+    expo_to_linear_button.callback = expo_to_linear_callback
+
+    # Create a view to hold the buttons
+    view = View()
+    view.add_item(linear_to_expo_button)
+    view.add_item(expo_to_linear_button)
+
+    # Send message with buttons
+    await ctx.send("Select a conversion type:", view=view)
+
+# Sync the slash commands with Discord
+@bot.event
+async def on_ready():
+    await bot.tree.sync()  # This registers the slash commands
+    print(f"Logged in as {bot.user}")
+
+# Start the bot using the token from environment variables
+bot.run(os.getenv("DISCORD_BOT_TOKEN"))
